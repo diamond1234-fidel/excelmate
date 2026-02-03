@@ -1,12 +1,10 @@
-# Use official Piston API image
 FROM ghcr.io/engineer-man/piston/api:latest
 
-# Expose port for Railway
 EXPOSE 5000
 
-# Optional: install Python runtime on startup
-# Replace 3.11.4 with the version you want
-RUN ["cli/index.js", "ppman", "install", "python=3.11.4"]
+# Copy the start script
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
 
-# Start the Piston API
-CMD ["node", "index.js"]
+# Use the start script as the container entrypoint
+CMD ["/start.sh"]
