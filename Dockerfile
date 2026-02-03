@@ -1,10 +1,13 @@
-FROM ghcr.io/engineer-man/piston/api:latest
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install flask pandas numpy
+
+# Copy app
+COPY app.py /app/app.py
 
 EXPOSE 5000
 
-# Copy the start script
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
-
-# Use the start script as the container entrypoint
-CMD ["/start.sh"]
+CMD ["python", "app.py"]
