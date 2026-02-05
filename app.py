@@ -22,6 +22,7 @@ SAFE_BUILTINS = {
     "range": range,
     "min": min,
     "max": max,
+    "round":round,
     "sum": sum,
     "abs": abs,
     "__import__": safe_import,
