@@ -2,10 +2,10 @@ from flask import Flask, request, jsonify
 import io, threading, time, contextlib, traceback, base64
 import pandas as pd
 import numpy as np
-from flask_cors import CORS
+from flask_cors import CORS  # <-- import CORS
 
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # <-- enable CORS for all routes
 
 # ---- safe imports ----
 ALLOWED_IMPORTS = {"pandas", "numpy", "time"}
@@ -30,45 +30,60 @@ SANDBOX_GLOBALS = {
     "pd": pd,
     "np": np,
     "time": time,
-    "df": None
+    "df": None  # placeholder for CSV
 }
 
 # ---- execution runner ----
-def run_code(code, result_dict):
+def run_code(code, stdout_buffer, stderr_buffer):
     try:
-        exec(code, SANDBOX_GLOBALS, result_dict)
+        with contextlib.redirect_stdout(stdout_buffer), \
+             contextlib.redirect_stderr(stderr_buffer):
+            exec(code, SANDBOX_GLOBALS, {})
     except Exception:
-        result_dict["error"] = traceback.format_exc()
+        stderr_buffer.write(traceback.format_exc())
 
 # ---- execution endpoint ----
 @app.route("/execute", methods=["POST"])
 def execute():
     data = request.get_json(silent=True) or {}
     code = data.get("code", "")
-    csv_base64 = data.get("csv", "")
+    csv_base64 = data.get("csv", "")  # optional base64 CSV string
 
     if not code.strip():
-        return jsonify({"error": "No code provided"}), 400
+        return jsonify({"stdout": "", "stderr": "No code provided"}), 400
 
+    # Decode CSV if provided
     if csv_base64:
         try:
             csv_bytes = base64.b64decode(csv_base64)
             SANDBOX_GLOBALS["df"] = pd.read_csv(io.StringIO(csv_bytes.decode()))
         except Exception as e:
-            return jsonify({"error": f"CSV decode error: {e}"}), 400
+            return jsonify({"stdout": "", "stderr": f"CSV decode error: {e}"}), 400
 
-    result_dict = {}
-    thread = threading.Thread(target=run_code, args=(code, result_dict), daemon=True)
+    stdout_buffer = io.StringIO()
+    stderr_buffer = io.StringIO()
+
+    thread = threading.Thread(
+        target=run_code,
+        args=(code, stdout_buffer, stderr_buffer),
+        daemon=True
+    )
 
     start_time = time.time()
     thread.start()
-    thread.join(timeout=10)  # longer for 1200 rows
+    thread.join(timeout=2)  # hard execution limit
 
     if thread.is_alive():
-        return jsonify({"error": "Execution timed out"}), 408
+        return jsonify({
+            "stdout": stdout_buffer.getvalue(),
+            "stderr": "Execution timed out"
+        }), 408
 
-    result_dict["execution_time"] = round(time.time() - start_time, 4)
-    return jsonify(result_dict)
+    return jsonify({
+        "stdout": stdout_buffer.getvalue(),
+        "stderr": stderr_buffer.getvalue(),
+        "execution_time": round(time.time() - start_time, 4)
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
