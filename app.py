@@ -2,13 +2,13 @@ from flask import Flask, request, jsonify
 import io, threading, time, contextlib, traceback, base64
 import pandas as pd
 import numpy as np
-from flask_cors import CORS  # <-- import CORS
+from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # <-- enable CORS for all routes
+CORS(app)  # <-- enable CORS
 
 # ---- safe imports ----
-ALLOWED_IMPORTS = {"pandas", "numpy", "time"}
+ALLOWED_IMPORTS = {"pandas", "numpy", "time", "json"}  # added json
 def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
     root = name.split(".")[0]
     if root in ALLOWED_IMPORTS:
@@ -25,11 +25,13 @@ SAFE_BUILTINS = {
 }
 
 # ---- sandbox globals ----
+import json  # expose json
 SANDBOX_GLOBALS = {
     "__builtins__": SAFE_BUILTINS,
     "pd": pd,
     "np": np,
     "time": time,
+    "json": json,  # added here
     "df": None  # placeholder for CSV
 }
 
