@@ -1,17 +1,13 @@
-# Use slim Python image
 FROM python:3.11-slim
 
-# Set working directory
 WORKDIR /app
 
-# Install dependencies
-RUN pip install --no-cache-dir flask pandas numpy
+# Install dependencies including flask-cors
+RUN pip install --no-cache-dir flask pandas numpy flask-cors
 
-# Copy your Flask app
+# Copy app
 COPY app.py /app/app.py
 
-# Expose the default Flask port
 EXPOSE 5000
 
-# Run Flask app
 CMD ["python", "app.py"]
