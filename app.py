@@ -1,126 +1,36 @@
 from flask import Flask, request, jsonify
-import io
-import threading
-import time
-import contextlib
-import traceback
-import pandas as pd
-import numpy as np
+import base64, subprocess, uuid
 
 app = Flask(__name__)
 
-# ============================================================
-# 1. CONTROLLED IMPORT SYSTEM
-# ============================================================
-# Only allow specific libraries needed for analytics
-ALLOWED_IMPORTS = {
-    "pandas",
-    "numpy",
-    "time",
-}
-
-def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
-    root = name.split(".")[0]
-    if root in ALLOWED_IMPORTS:
-        return __import__(name, globals, locals, fromlist, level)
-    raise ImportError(f"Import blocked: {name}")
-
-# ============================================================
-# 2. SAFE BUILTINS (WHITELIST, NOT BLACKLIST)
-# ============================================================
-# These are common, non-dangerous Python utilities
-SAFE_BUILTINS = {
-    # basic utilities
-    "print": print,
-    "len": len,
-    "range": range,
-    "min": min,
-    "max": max,
-    "sum": sum,
-    "abs": abs,
-    "round": round,
-
-    # iteration helpers
-    "enumerate": enumerate,
-    "zip": zip,
-    "sorted": sorted,
-
-    # type constructors
-    "int": int,
-    "float": float,
-    "str": str,
-    "bool": bool,
-
-    # controlled import hook
-    "__import__": safe_import,
-}
-
-# ============================================================
-# 3. SANDBOX GLOBALS
-# ============================================================
-# What user code can "see"
-SANDBOX_GLOBALS = {
-    "__builtins__": SAFE_BUILTINS,
-
-    # preloaded libraries (faster, predictable)
-    "pd": pd,
-    "np": np,
-    "time": time,
-}
-
-# ============================================================
-# 4. CODE EXECUTION RUNNER
-# ============================================================
-def run_code(code, stdout_buffer, stderr_buffer):
-    try:
-        with contextlib.redirect_stdout(stdout_buffer), \
-             contextlib.redirect_stderr(stderr_buffer):
-            exec(code, SANDBOX_GLOBALS, {})
-    except Exception:
-        # full traceback is MUCH better than str(e)
-        stderr_buffer.write(traceback.format_exc())
-
-# ============================================================
-# 5. EXECUTION ENDPOINT
-# ============================================================
 @app.route("/execute", methods=["POST"])
 def execute():
-    data = request.get_json(silent=True) or {}
+    data = request.get_json() or {}
     code = data.get("code", "")
+    csv_str = data.get("csv", "")  # base64 string
+    runs = data.get("runs", 1)
 
     if not code.strip():
-        return jsonify({
-            "stdout": "",
-            "stderr": "No code provided"
-        }), 400
+        return jsonify({"stdout": "", "stderr": "No code provided"}), 400
 
-    stdout_buffer = io.StringIO()
-    stderr_buffer = io.StringIO()
+    # Spawn a Docker container for this request
+    container_name = f"sandbox-{uuid.uuid4().hex[:8]}"
+    cmd = [
+        "docker", "run", "--rm",
+        "-e", f"CODE={code}",
+        "-e", f"CSV={csv_str}",
+        "-e", f"RUNS={runs}",
+        "my-worker-image"
+    ]
 
-    thread = threading.Thread(
-        target=run_code,
-        args=(code, stdout_buffer, stderr_buffer),
-        daemon=True
-    )
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        output = result.stdout.strip()
+        return jsonify(json.loads(output))
+    except subprocess.TimeoutExpired:
+        return jsonify({"stdout": "", "stderr": "Execution timed out"}), 408
+    except Exception as e:
+        return jsonify({"stdout": "", "stderr": str(e)}), 500
 
-    start_time = time.time()
-    thread.start()
-    thread.join(timeout=2)  # ⛔ hard execution limit
-
-    if thread.is_alive():
-        return jsonify({
-            "stdout": stdout_buffer.getvalue(),
-            "stderr": "Execution timed out"
-        }), 408
-
-    return jsonify({
-        "stdout": stdout_buffer.getvalue(),
-        "stderr": stderr_buffer.getvalue(),
-        "execution_time": round(time.time() - start_time, 4)
-    })
-
-# ============================================================
-# 6. SERVER ENTRY POINT
-# ============================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
