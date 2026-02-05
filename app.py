@@ -1,14 +1,13 @@
 from flask import Flask, request, jsonify
-import sys
 import io
 import threading
+import time
+import contextlib
 import pandas as pd
 import numpy as np
-import time
 
 app = Flask(__name__)
 
-# Allowed builtins ONLY
 SAFE_BUILTINS = {
     "print": print,
     "len": len,
@@ -19,7 +18,6 @@ SAFE_BUILTINS = {
     "abs": abs,
 }
 
-# Allowed globals
 SANDBOX_GLOBALS = {
     "__builtins__": SAFE_BUILTINS,
     "pd": pd,
@@ -28,8 +26,8 @@ SANDBOX_GLOBALS = {
 }
 
 def run_code(code, output):
-    sys.stdout = output
-    exec(code, SANDBOX_GLOBALS, {})
+    with contextlib.redirect_stdout(output):
+        exec(code, SANDBOX_GLOBALS, {})
 
 @app.route("/execute", methods=["POST"])
 def execute():
@@ -38,11 +36,8 @@ def execute():
     output = io.StringIO()
     thread = threading.Thread(target=run_code, args=(code, output))
 
-    start = time.time()
     thread.start()
-    thread.join(timeout=2)  # ⛔ hard time limit
-
-    sys.stdout = sys.__stdout__
+    thread.join(timeout=2)
 
     if thread.is_alive():
         return jsonify({
