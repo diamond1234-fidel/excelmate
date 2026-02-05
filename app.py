@@ -2,8 +2,10 @@ from flask import Flask, request, jsonify
 import io, threading, time, contextlib, traceback, base64
 import pandas as pd
 import numpy as np
+from flask_cors import CORS  # <-- import CORS
 
 app = Flask(__name__)
+CORS(app)  # <-- enable CORS for all routes
 
 # ---- safe imports ----
 ALLOWED_IMPORTS = {"pandas", "numpy", "time"}
