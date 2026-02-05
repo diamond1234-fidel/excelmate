@@ -3,11 +3,9 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install dependencies
-RUN pip install flask pandas numpy
+RUN pip install pandas numpy
 
-# Copy app
-COPY app.py /app/app.py
+# Copy worker code
+COPY worker.py /app/worker.py
 
-EXPOSE 5000
-
-CMD ["python", "app.py"]
+CMD ["python", "worker.py"]
