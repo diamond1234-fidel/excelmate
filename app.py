@@ -73,7 +73,7 @@ def execute():
 
     start_time = time.time()
     thread.start()
-    thread.join(timeout=2)  # hard execution limit
+    thread.join(timeout=10)  # hard execution limit
 
     if thread.is_alive():
         return jsonify({
