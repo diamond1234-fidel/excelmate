@@ -1,14 +1,17 @@
 from flask import Flask, request, jsonify
-import io, threading, time, contextlib, traceback, base64
+import io, time, contextlib, traceback, base64
 import pandas as pd
 import numpy as np
+import multiprocessing as mp
 from flask_cors import CORS
+import json
 
 app = Flask(__name__)
-CORS(app)  # <-- enable CORS
+CORS(app)
 
 # ---- safe imports ----
-ALLOWED_IMPORTS = {"pandas", "numpy", "time", "json"}  # added json
+ALLOWED_IMPORTS = {"pandas", "numpy", "time", "json"}
+
 def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
     root = name.split(".")[0]
     if root in ALLOWED_IMPORTS:
@@ -17,73 +20,85 @@ def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
 
 # ---- safe builtins ----
 SAFE_BUILTINS = {
-    "print": print, "len": len, "range": range, "min": min, "max": max,
-    "sum": sum, "abs": abs, "round": round, "enumerate": enumerate,
-    "zip": zip, "sorted": sorted,
+    "print": print, "len": len, "range": range,
+    "min": min, "max": max, "sum": sum,
+    "abs": abs, "round": round,
+    "enumerate": enumerate, "zip": zip, "sorted": sorted,
     "int": int, "float": float, "str": str, "bool": bool,
     "__import__": safe_import,
 }
 
-# ---- sandbox globals ----
-import json  # expose json
-SANDBOX_GLOBALS = {
-    "__builtins__": SAFE_BUILTINS,
-    "pd": pd,
-    "np": np,
-    "time": time,
-    "json": json,  # added here
-    "df": None  # placeholder for CSV
-}
+# ---- isolated execution runner ----
+def run_code(code, csv_bytes, result):
+    stdout = io.StringIO()
+    stderr = io.StringIO()
 
-# ---- execution runner ----
-def run_code(code, stdout_buffer, stderr_buffer):
+    sandbox_globals = {
+        "__builtins__": SAFE_BUILTINS,
+        "pd": pd,
+        "np": np,
+        "time": time,
+        "json": json,
+        "df": None
+    }
+
     try:
-        with contextlib.redirect_stdout(stdout_buffer), \
-             contextlib.redirect_stderr(stderr_buffer):
-            exec(code, SANDBOX_GLOBALS, {})
+        if csv_bytes:
+            sandbox_globals["df"] = pd.read_csv(
+                io.StringIO(csv_bytes.decode())
+            )
+
+        with contextlib.redirect_stdout(stdout), \
+             contextlib.redirect_stderr(stderr):
+            exec(code, sandbox_globals, {})
     except Exception:
-        stderr_buffer.write(traceback.format_exc())
+        stderr.write(traceback.format_exc())
+
+    result["stdout"] = stdout.getvalue()
+    result["stderr"] = stderr.getvalue()
 
 # ---- execution endpoint ----
 @app.route("/execute", methods=["POST"])
 def execute():
     data = request.get_json(silent=True) or {}
     code = data.get("code", "")
-    csv_base64 = data.get("csv", "")  # optional base64 CSV string
+    csv_base64 = data.get("csv", "")
 
     if not code.strip():
         return jsonify({"stdout": "", "stderr": "No code provided"}), 400
 
-    # Decode CSV if provided
+    timeout = min(int(data.get("timeout", 10)), 20)
+
+    csv_bytes = None
     if csv_base64:
         try:
             csv_bytes = base64.b64decode(csv_base64)
-            SANDBOX_GLOBALS["df"] = pd.read_csv(io.StringIO(csv_bytes.decode()))
         except Exception as e:
             return jsonify({"stdout": "", "stderr": f"CSV decode error: {e}"}), 400
 
-    stdout_buffer = io.StringIO()
-    stderr_buffer = io.StringIO()
+    manager = mp.Manager()
+    result = manager.dict()
 
-    thread = threading.Thread(
+    proc = mp.Process(
         target=run_code,
-        args=(code, stdout_buffer, stderr_buffer),
-        daemon=True
+        args=(code, csv_bytes, result)
     )
 
     start_time = time.time()
-    thread.start()
-    thread.join(timeout=10)  # hard execution limit
+    proc.start()
+    proc.join(timeout)
 
-    if thread.is_alive():
+    if proc.is_alive():
+        proc.terminate()
+        proc.join()
         return jsonify({
-            "stdout": stdout_buffer.getvalue(),
+            "stdout": result.get("stdout", ""),
             "stderr": "Execution timed out"
         }), 408
 
     return jsonify({
-        "stdout": stdout_buffer.getvalue(),
-        "stderr": stderr_buffer.getvalue(),
+        "stdout": result.get("stdout", ""),
+        "stderr": result.get("stderr", ""),
         "execution_time": round(time.time() - start_time, 4)
     })
 
